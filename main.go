@@ -116,13 +116,32 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.ClusterVersionReconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		ConsolePort: int32(odfConsolePort), //nolint:gosec
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ClusterVersion")
+	// apiclient.New() returns a client without cache. cache is not initialized before mgr.Start()
+	// we need this because we need to watch for CRDs the operator is dependent on
+	apiClient, err := client.New(mgr.GetConfig(), client.Options{
+		Scheme: mgr.GetScheme(),
+	})
+	if err != nil {
+		setupLog.Error(err, "Unable to get Client")
 		os.Exit(1)
+	}
+
+	clusterVersionCRD := &extv1.CustomResourceDefinition{}
+	clusterVersionCRD.Name = "clusterversions.config.openshift.io"
+	if err := apiClient.Get(context.TODO(), client.ObjectKeyFromObject(clusterVersionCRD), clusterVersionCRD); client.IgnoreNotFound(err) != nil {
+		setupLog.Error(err, "unable to get ClusterVersion")
+		os.Exit(1)
+	}
+
+	if clusterVersionCRD.UID != "" {
+		if err = (&controllers.ClusterVersionReconciler{
+			Client:      mgr.GetClient(),
+			Scheme:      mgr.GetScheme(),
+			ConsolePort: int32(odfConsolePort), //nolint:gosec
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "ClusterVersion")
+			os.Exit(1)
+		}
 	}
 
 	if err = (&controllers.SubscriptionReconciler{
